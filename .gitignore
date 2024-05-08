@@ -1,0 +1,17 @@
+datasets/*
+coco/*
+venv/*
+install_files/*
+install_files - Copy/*
+weights/*
+mlruns/*
+runs/*
+dataset/*
+*/mlruns/*
+custom_dataset/*
+mlartifacts/*
+pre_processing/ginseng_*
+faster_rcnn/__pycache__/*
+ssd/runs/*
+*.pt
+faster_rcnn/*pt

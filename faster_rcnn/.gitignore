@@ -1,0 +1,6 @@
+images/*
+annotations/*
+test_images/*
+test_annotations/*
+*.pt
+venv/*

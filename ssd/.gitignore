@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+.vscode/
+tmp/
+logs/
+datasets/
+configs/
+tests/
+*.pth
+install_lib/*
+venv/*
+*zip
