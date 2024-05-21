@@ -15,36 +15,58 @@ import mlflow
 import argparse
 import mlflow.pytorch
 import random
+from torch.cuda.amp import autocast, GradScaler  # AMP modules
+
+
+class WarmupConstantSchedule(torch.optim.lr_scheduler.LambdaLR):
+    """ Linear warmup and then constant.
+        Linearly increases learning rate schedule from 0 to 1 over `warmup_steps` training steps.
+        Keeps learning rate schedule equal to 1. after warmup_steps.
+    """
+    def __init__(self, optimizer, warmup_steps, last_epoch=-1):
+
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return float(step) / float(max(1.0, warmup_steps))
+            return 1.
+
+        super(WarmupConstantSchedule, self).__init__(optimizer, lr_lambda, last_epoch=last_epoch)
+
 
 def collate_fn(batch):
     return tuple(zip(*batch))
 
-def evaluate_model(model, data_loader, device):
+
+def evaluate_model(model, data_loader, device, scaler):
     val_loss = 0
     detections = []
     annotations = []
-    
+
+    model.eval()
     with torch.no_grad():
         for images, targets in tqdm(data_loader):
             images = list(img.to(device) for img in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-            model.eval()
-            loss_dict = model(images, targets)
-            val_loss += sum(loss for loss in loss_dict.values())
 
-            if len(images) > 0:  # Only add detections if there are images processed
-                outputs = model(images)
-                detections.extend(outputs)
-                annotations.extend(targets)
+            with autocast():
+                loss_dict = model(images, targets)
+                val_loss += sum(loss for loss in loss_dict.values())
+
+                if len(images) > 0:  # Only add detections if there are images processed
+                    outputs = model(images)
+                    detections.extend(outputs)
+                    annotations.extend(targets)
 
     # Calculate mAP
     mAP = calculate_mAP(detections, annotations)
     return val_loss, mAP
 
+
 def calculate_mAP(detections, annotations):
     # This function should compute the mean Average Precision (mAP) for the detections compared to annotations
     # Implement mAP calculation based on your specific use case and metrics required
     return np.random.random()  # Placeholder for mAP calculation
+
 
 def main():
     seed_num = 42
@@ -89,7 +111,9 @@ def main():
 
     num_epochs = int(args.epochs)
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
+    optimizer = torch.optim.AdamW(params, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+    scheduler = WarmupConstantSchedule(optimizer, warmup_steps=10)
+    scaler = GradScaler()  # Initialize GradScaler for AMP
 
     print('----------------------Train Start--------------------------')
     for epoch in range(num_epochs):
@@ -99,23 +123,28 @@ def main():
         for imgs, annotations in tqdm(data_loader_train):
             imgs = list(img.to(device) for img in imgs)
             annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
-            loss_dict = model(imgs, annotations)
-            losses = sum(loss for loss in loss_dict.values())
 
             optimizer.zero_grad()
-            losses.backward()
-            optimizer.step()
-            epoch_loss += losses
+            with autocast():
+                loss_dict = model(imgs, annotations)
+                losses = sum(loss for loss in loss_dict.values())
+
+            scaler.scale(losses).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            epoch_loss += losses.item()
             mlflow.log_metric("train_loss", losses.item(), step=epoch)
+        scheduler.step()
 
         # Validation step
-        val_loss, mAP = evaluate_model(model, data_loader_val, device)
+        val_loss, mAP = evaluate_model(model, data_loader_val, device, scaler)
         print(f'Epoch: {epoch+1}, Train Loss: {epoch_loss}, Val Loss: {val_loss}, mAP: {mAP}, Time: {time.time() - start}')
         mlflow.log_metrics({"val_loss": val_loss.item(), "mAP": mAP}, step=epoch)
 
     torch.save(model.state_dict(), f'faster_rcnn/model_{num_epochs}.pt')
     mlflow.pytorch.log_model(model, "model")
     mlflow.end_run()
+
 
 if __name__ == '__main__':
     main()

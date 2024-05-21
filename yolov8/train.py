@@ -41,7 +41,7 @@ def main():
     # MLflow 실험 시작
     # with mlflow.start_run():
     data = f'custom_dataset/{args.run_name}/yolo/custom.yaml'
-    results = model.train(data=data, run_name=args.run_name, epochs=int(args.epochs))
+    results = model.train(data=data, run_name=args.run_name, epochs=int(args.epochs), optimizer='AdamW')
         
             
 if __name__ == '__main__':
